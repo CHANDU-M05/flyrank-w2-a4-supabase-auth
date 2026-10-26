@@ -12,10 +12,10 @@ const { createApp } = require('../../src/app');
 // all, which is the worst possible diagnostic.
 const openServers = new Set();
 
-async function startTestApp({ tasks, supabase = null, extra = null, log = () => {} }) {
+async function startTestApp({ tasks, supabase = null, signOut = null, extra = null, log = () => {} }) {
   // The request-log sink is injectable for one test in particular: proving that nothing sensitive is
   // written out means reading what the app wrote, and a hardcoded no-op would make that untestable.
-  const app = createApp({ tasks, supabase, log });
+  const app = createApp({ tasks, supabase, signOut, log });
   if (extra) extra(app);
 
   const server = await new Promise((resolve, reject) => {

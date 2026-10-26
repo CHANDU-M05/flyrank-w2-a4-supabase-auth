@@ -6,14 +6,18 @@
 // now asserts the opposite — it is kept here rather than deleted because the shape of the request that
 // changed is the point. What a *verified* token returns lives in test/unit.token-verification.test.js;
 // this file is only about the header and the gate.
+//
+// Stage 4 moved that gate into src/middleware/auth.js without changing any of these answers — which is
+// itself worth testing: if the middleware were wired in a different order, or asked the provider about
+// something other than the header it was given, the assertions below would move.
 const assert = require('node:assert/strict');
 const { after, before, beforeEach, describe, test } = require('node:test');
 
 const { HttpError } = require('../src/errors');
 const { readBearer } = require('../src/http');
-const { createFakeSupabase } = require('./helpers/fake-supabase');
+const { createFakeSupabase, fakeUser } = require('./helpers/fake-supabase');
 const { createFakeTasks } = require('./helpers/fake-tasks');
-const { closeAllTestServers, startTestApp } = require('./helpers/server');
+const { bearer, closeAllTestServers, startTestApp } = require('./helpers/server');
 
 after(closeAllTestServers);
 
@@ -141,11 +145,31 @@ describe('GET /protected/profile', () => {
     assert.equal(supabase.inputFor('getUser'), 'made-up-token-12345', 'asked about the token sent');
   });
 
-  test('a path under /protected that does not exist is a 404, not an invitation to guess', async () => {
+  test('an unknown path under /protected is refused for the wrong-token reason, not answered 404', async () => {
+    // Stage 4 changed this answer. The middleware is mounted over the whole prefix, so a caller whose
+    // token does not verify never learns whether /protected/nope exists — which is the safer order
+    // (an unauthenticated probe cannot use 404-vs-401 to map the API) and the price is that a
+    // legitimate-looking 404 turns into a 401 for someone who is not identified anyway.
     const response = await app.get('/protected/nope', { authorization: 'Bearer made-up-token-12345' });
+
+    assert.equal(response.status, 401);
+    assert.deepEqual(response.body, { error: 'Invalid or expired token' });
+  });
+
+  test('but a verified caller still gets an honest 404 for a path that does not exist', async () => {
+    // The other half of that trade, and the reason the first test alone would not be enough: refusing
+    // everything under the prefix would make a typo in `/protected/profil` look like an auth problem
+    // forever. Verification first, then the ordinary routing miss.
+    const verifying = createFakeSupabase({
+      getUser: () => ({ data: { user: fakeUser() }, error: null }),
+    });
+    const configured = await startTestApp({ tasks: createFakeTasks(), supabase: verifying });
+
+    const response = await configured.get('/protected/nope', { authorization: bearer('a-real-token') });
 
     assert.equal(response.status, 404);
     assert.deepEqual(response.body, { error: 'GET /protected/nope not found' });
+    await configured.close();
   });
 
   test('with no client, a caller who sent nothing is still refused for sending nothing', async () => {

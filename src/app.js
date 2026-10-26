@@ -14,13 +14,20 @@ const { createAuthRouter } = require('./routes/auth');
 const { createProtectedRouter } = require('./routes/protected');
 const { createPublicRouter } = require('./routes/public');
 const { createTasksRouter } = require('./routes/tasks');
+const { createAuthMiddleware } = require('./middleware/auth');
 
 const API_NAME = 'flyrank-w2-a4-supabase-auth';
 // The version tracks what a client can receive, which is the only thing a version is worth naming.
 const API_VERSION = '0.1.0';
 
-function createApp({ tasks, supabase = null, log = console.log }) {
+function createApp({ tasks, supabase = null, signOut = null, log = console.log }) {
   const app = express();
+
+  // Built once and handed to every router that needs it, which is what §5's "do not duplicate
+  // token-verification logic" means in practice: one instance, so one set of rules about header
+  // shapes, provider outages and what may be attached to the request. Assembling it here rather than
+  // inside a route keeps the dependency visible in the wiring.
+  const requireAuth = createAuthMiddleware({ supabase });
 
   // Express's default header advertises the framework and its version to anyone probing the API.
   app.disable('x-powered-by');
@@ -55,8 +62,10 @@ function createApp({ tasks, supabase = null, log = console.log }) {
           'GET /health',
           'GET /public/info',
           'GET /protected/profile',
+          'GET /protected/dashboard',
           'POST /auth/signup',
           'POST /auth/login',
+          'POST /auth/logout',
           'GET /tasks',
           'GET /tasks/{id}',
           'POST /tasks',
@@ -84,11 +93,11 @@ function createApp({ tasks, supabase = null, log = console.log }) {
   app.use('/tasks', createTasksRouter({ tasks }));
 
   app.use('/public', createPublicRouter());
-  app.use('/protected', createProtectedRouter({ supabase }));
+  app.use('/protected', createProtectedRouter({ requireAuth }));
 
   // Mounted before the catch-all below, so an unmatched path under /auth still reaches it and
   // answers 404 in this API's own envelope.
-  app.use('/auth', createAuthRouter({ supabase }));
+  app.use('/auth', createAuthRouter({ supabase, requireAuth, signOut }));
 
   app.get(
     '/stats',

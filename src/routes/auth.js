@@ -1,4 +1,4 @@
-// Signup and login — the two routes that talk to Supabase on a caller's behalf.
+// Signup, login and logout — the three routes that talk to Supabase on a caller's behalf.
 //
 // What this file deliberately does NOT do: it never hashes a password, never stores one, never signs
 // or decodes a token, and never decides on its own whether a password is strong enough. Those are the
@@ -8,11 +8,11 @@
 const express = require('express');
 
 const { HttpError } = require('../errors');
-const { asyncHandler, requireObject } = require('../http');
+const { asyncHandler, readBearer, requireObject } = require('../http');
 // Error translation and the user/session representations come from src/supabase.js, the module that
 // owns talking to the provider — Stage 3 gave the protected route the same needs, and a route file is
 // not a sensible home for vocabulary two routes share.
-const { authCall, publicSession, publicUser } = require('../supabase');
+const { authCall, describeSignOutError, publicSession, publicUser } = require('../supabase');
 
 // A shape check, not a deliverability check. It exists so "hello" and "a@b" get a 400 from us rather
 // than a 400 translated from GoTrue, and it accepts anything address-shaped because whether the
@@ -37,21 +37,28 @@ function cleanPassword(value) {
   return value;
 }
 
-function createAuthRouter({ supabase }) {
+function createAuthRouter({ supabase, requireAuth, signOut = null }) {
   const router = express.Router();
 
-  // The app builds a client whenever SUPABASE_URL and SUPABASE_KEY are set. If they are not, auth
-  // routes answer 503 rather than 404: the route exists, the dependency does not, and a caller
-  // told "not found" would go looking for a typo in their own URL.
-  router.use((request, response, next) => {
+  // The app builds a client whenever SUPABASE_URL and SUPABASE_KEY are set. If they are not, the
+  // routes that spend a caller's credentials answer 503 rather than 404: the route exists, the
+  // dependency does not, and a caller told "not found" would go looking for a typo in their own URL.
+  //
+  // Applied per route rather than as a `router.use` over the whole mount, because /logout has a check
+  // that must come first: someone who sent no bearer token is unauthorised whatever our configuration
+  // looks like, and they should hear that before hearing about our environment. That is the ordering
+  // /protected/profile has used since Stage 3, and two different orderings inside one API is how
+  // "which comes first" becomes folklore.
+  const requireSupabase = (request, response, next) => {
     if (!supabase) {
       return next(new HttpError(503, 'authentication is not configured'));
     }
     next();
-  });
+  };
 
   router.post(
     '/signup',
+    requireSupabase,
     asyncHandler(async (request, response) => {
       const body = requireObject(request.body);
       const email = cleanEmail(body.email);
@@ -74,6 +81,7 @@ function createAuthRouter({ supabase }) {
 
   router.post(
     '/login',
+    requireSupabase,
     asyncHandler(async (request, response) => {
       const body = requireObject(request.body);
       const email = cleanEmail(body.email);
@@ -88,6 +96,37 @@ function createAuthRouter({ supabase }) {
       // The access token is the thing the next request will be made with, and the refresh token
       // outlives it. Both are returned because §4.B asks for both, and neither is ever logged.
       response.status(200).json({ user: publicUser(data.user), session: publicSession(data.session) });
+    }),
+  );
+
+  // §4.E. Behind the same middleware as /protected/profile, which is the reuse proof: this route does
+  // not verify anything itself, it just spends the identity the middleware confirmed.
+  //
+  // The token is re-read from the header rather than taken off the request. That is deliberate:
+  // §5 says `req.user` carries *user information*, and stashing the bearer on the request object
+  // would put a live credential somewhere a future `console.log(req)` or a request-dumping error
+  // handler can find it. readBearer is a format check with no cost, so spending it twice is cheaper
+  // than holding a secret in memory for the lifetime of the request.
+  router.post(
+    '/logout',
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      // After the middleware on purpose, for the same reason as the 503 in src/middleware/auth.js: a
+      // caller who sent no token is unauthorised whatever this server is configured with.
+      if (!signOut) {
+        throw new HttpError(503, 'sign-out is not configured');
+      }
+
+      try {
+        await signOut({ accessToken: readBearer(request) });
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw describeSignOutError(error);
+      }
+
+      // 204 with an empty body, §4.E. `.end()` rather than `.json({})`: a 204 that carries a body is
+      // malformed HTTP, and some clients treat the mismatch as a reason to drop the response.
+      response.status(204).end();
     }),
   );
 

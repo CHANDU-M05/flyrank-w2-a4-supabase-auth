@@ -125,11 +125,43 @@ function createFakeSupabase({ signUp, signInWithPassword, getUser, throwInstead 
   };
 }
 
+// A stand-in for the request-scoped sign-out call in src/supabase.js. It is injected separately from
+// the client because that is how the route receives it, and the point worth recording is the argument:
+// §4.E's warning is that a shared client would sign out the wrong person, so a test has to be able to
+// see whose bearer token actually reached the provider call.
+//
+// `failWith` mirrors how signOutAs reports a refusal — an error carrying a status and nothing else, no
+// response body — so a test of the 502 path is testing the route's judgement rather than my invention
+// of what an error looks like.
+function createFakeSignOut({ failWith = null } = {}) {
+  const calls = [];
+
+  const signOut = async ({ accessToken }) => {
+    calls.push({ accessToken });
+    if (failWith !== null) {
+      const status = typeof failWith === 'function' ? failWith(accessToken) : failWith;
+      if (status instanceof Error) throw status;
+      const error = new Error(`sign-out failed: ${status}`);
+      error.name = 'SupabaseError';
+      error.status = status;
+      throw error;
+    }
+    return true;
+  };
+
+  signOut.calls = calls;
+  signOut.clear = () => {
+    calls.length = 0;
+  };
+  return signOut;
+}
+
 module.exports = {
   FAKE_ACCESS_TOKEN,
   FAKE_REFRESH_TOKEN,
   FAKE_USER_ID,
   authError,
+  createFakeSignOut,
   createFakeSupabase,
   fakeSession,
   fakeUser,

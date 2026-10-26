@@ -5,7 +5,7 @@ const { loadConfig, describe, ConfigError } = require('./config');
 const { createPool, waitForDatabase } = require('./db/pool');
 const { describeTarget } = require('./db/schema');
 const { createTasksRepository } = require('./repositories/tasks');
-const { createSupabaseClient } = require('./supabase');
+const { createSupabaseClient, signOutAs } = require('./supabase');
 
 function fail(message) {
   console.error(`[startup] ${message}`);
@@ -40,7 +40,13 @@ async function main() {
     fail(error.message);
   }
 
-  const app = createApp({ tasks, supabase });
+  // Sign-out is request-scoped, so it is bound here to the project's own URL and public key and given
+  // to the app as a callable: the only per-request argument is the caller's bearer token. Leaving it
+  // injectable is what lets a test assert a 204 or a 502 without a network.
+  const signOut = ({ accessToken }) =>
+    signOutAs({ supabaseUrl: config.supabaseUrl, supabaseKey: config.supabaseKey, accessToken });
+
+  const app = createApp({ tasks, supabase, signOut });
 
   const server = app.listen(config.port, () => {
     // describe() is the only way configuration reaches this line, and it cannot produce a secret.

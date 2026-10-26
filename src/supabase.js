@@ -40,9 +40,27 @@ function createSupabaseClient({ supabaseUrl, supabaseKey }) {
 //   local   revoke only this session
 //   others  revoke every session except this one
 //
-// What it does NOT do is invalidate the bearer you already handed out. That JWT stays
-// cryptographically valid until `jwt_expiry` passes. See the README and the integration test, which
-// measures this instead of assuming it.
+// What "logged out" actually means here, measured against the local stack rather than assumed:
+//
+//   the bearer you were holding stops working. A global sign-out revokes the session its `sub` names,
+//   and from then on GoTrue answers `session_not_found` for that access token — so /protected/*
+//   returns 401. Measured in test/integration/supabase-auth.test.js.
+//
+// That is not the same as the JWT becoming meaningless. Nothing was re-signed and nothing was
+// blacklisted by this server (it holds no state): the token is still cryptographically valid until
+// `jwt_expiry` passes, and whether it is *accepted* depends on the provider still recognising the
+// session behind it. Two consequences worth knowing, both measured:
+//
+//   1. a token with no session behind it cannot be revoked this way. An access token minted from the
+//      project's symmetric JWT secret carries no `session_id`, verifies fine, and survives every
+//      logout you can ask for — see the README's security notes.
+//   2. `scope = global` is wider than one device: it ends every session for that user, so signing out
+//      on a laptop also signs out the phone. `local` would end only this session, and `others` only
+//      the others. Global is what supabase-js defaults to and what a user typing "log out" means.
+//
+// So the sentence to avoid is "logout invalidates all issued tokens", which is a claim about this
+// server's power that it does not have. What is true: logout ends the provider's sessions for that
+// user, and tokens that were backed by one stop verifying.
 async function signOutAs({ supabaseUrl, supabaseKey, accessToken, scope = 'global' }) {
   const response = await fetch(`${supabaseUrl}/auth/v1/logout?scope=${encodeURIComponent(scope)}`, {
     method: 'POST',
@@ -176,6 +194,25 @@ function describeVerificationError(error) {
   return new HttpError(502, 'authentication service could not verify this token');
 }
 
+// What a failed sign-out means for the caller. Its own translator, because the two existing ones
+// would both be wrong here: describeAuthError could reflect GoTrue's wording about a session back into
+// the response, and describeVerificationError's "could not verify this token" is a statement about a
+// token we have already verified — the middleware in src/middleware/auth.js vouched for it seconds
+// before this call failed.
+//
+// The rule that matters: a sign-out that did not happen is never reported as a 204. Telling someone
+// they are logged out when their session is still live is worse than telling them it failed, because
+// they will stop worrying about the machine they are on.
+function describeSignOutError(error) {
+  const status = typeof error?.status === 'number' ? error.status : 0;
+  if (!status) return new HttpError(502, 'authentication service is unreachable');
+  // The token verified (otherwise the middleware refused already) but there is no session for it to
+  // end — a token minted outside a real sign-in, or one whose session was already cut. Their
+  // credentials are what need replacing, so this stays a 401 and says no more than that.
+  if (status === 401 || status === 403) return new HttpError(401, INVALID_TOKEN);
+  return new HttpError(502, 'sign-out could not be completed');
+}
+
 // supabase-js reports failures two ways: a returned `{ data, error }` for anything GoTrue answered,
 // and a genuine throw for the rarer cases. Both must end up in this API's `{"error": ...}` envelope,
 // so both go through here and a handler never has to remember to check twice.
@@ -226,6 +263,7 @@ module.exports = {
   authCall,
   createSupabaseClient,
   describeAuthError,
+  describeSignOutError,
   describeVerificationError,
   publicSession,
   publicUser,

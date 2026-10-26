@@ -60,4 +60,30 @@ function requireObject(body, name = 'request body') {
   return body;
 }
 
-module.exports = { asyncHandler, parseId, cleanTitle, parseDone, requireObject, HttpError };
+// Pull the bearer token out of an Authorization header, or refuse with the 401 §4.D specifies.
+//
+// This only decides whether a header is *shaped* like a bearer token. It says nothing about whether
+// the token means anything — that is `supabase.auth.getUser()`, and it is deliberately not hidden in
+// here, because a function named "read the bearer" quietly verifying a signature is how a reviewer
+// misses the difference between checking a format and checking an identity.
+//
+// `Access token required` covers absent, non-Bearer and empty alike. One message for three shapes is
+// what §4.D asks for, and it is the right call: distinguishing them hands a caller a free oracle about
+// the expected format and buys a legitimate client nothing, since all three mean the same thing —
+// there is no usable token in the header.
+function readBearer(request) {
+  const required = new HttpError(401, 'Access token required');
+  const header = request.headers.authorization; // Node lowercases header names, not the value.
+  if (typeof header !== 'string') throw required; // Absent, or sent twice and collected into an array.
+
+  // RFC 6750 makes the scheme case-insensitive and lets RFC 7235's optional whitespace be a tab as
+  // well as a space, hence one split on any run of whitespace rather than a hard-coded ' '. Anything
+  // that splits into more than scheme-and-token is two things jammed into one header, and gets
+  // refused rather than guessed at.
+  const parts = header.trim().split(/\s+/);
+  if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer' || parts[1] === '') throw required;
+
+  return parts[1];
+}
+
+module.exports = { asyncHandler, parseId, cleanTitle, parseDone, requireObject, readBearer, HttpError };

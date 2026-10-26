@@ -84,7 +84,7 @@ function createApp({ tasks, supabase = null, log = console.log }) {
   app.use('/tasks', createTasksRouter({ tasks }));
 
   app.use('/public', createPublicRouter());
-  app.use('/protected', createProtectedRouter());
+  app.use('/protected', createProtectedRouter({ supabase }));
 
   // Mounted before the catch-all below, so an unmatched path under /auth still reaches it and
   // answers 404 in this API's own envelope.

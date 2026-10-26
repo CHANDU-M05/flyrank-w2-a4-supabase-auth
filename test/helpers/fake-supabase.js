@@ -59,6 +59,20 @@ function authError({ code, message, status }) {
   return error;
 }
 
+// The second error shape supabase-js can hand back from a verification call, and the reason a route
+// cannot trust `status` alone. Read off the local stack: GoTrue answered
+// `403 {"error_code":"session_not_found"}` and the client re-raised it as an `AuthSessionMissingError`
+// with status 400 and no `code` at all. Kept as its own helper rather than `authError({ code:
+// undefined })` because the missing code is the whole point, and a caller should not be able to
+// accidentally build a different error by forgetting to pass one.
+function sessionMissingError() {
+  const error = new Error('Auth session missing!');
+  error.name = 'AuthSessionMissingError';
+  error.__isAuthError = true;
+  error.status = 400;
+  return error;
+}
+
 // Each behaviour may be a value (`{ data, error }`) or a function of the input, so a test can say
 // "sign-up fails with this error" or "sign-up echoes the email it was handed" without ceremony. What
 // this returns is always a function: a fallback that happens to be a function must be called, not
@@ -92,6 +106,12 @@ function createFakeSupabase({ signUp, signInWithPassword, getUser, throwInstead 
 
   return {
     calls,
+    // Empty the journal. The client is bound to the app at construction, so a suite that wants to
+    // assert "this request made no call to the provider" needs a per-test reset rather than an
+    // accumulated count — otherwise the assertion quietly depends on which test ran before it.
+    clear() {
+      calls.length = 0;
+    },
     methods: () => calls.map((call) => call.method),
     inputFor: (method) => calls.find((call) => call.method === method)?.input,
     auth: {
@@ -113,4 +133,5 @@ module.exports = {
   createFakeSupabase,
   fakeSession,
   fakeUser,
+  sessionMissingError,
 };

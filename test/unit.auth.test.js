@@ -10,14 +10,9 @@
 const assert = require('node:assert/strict');
 const { after, describe, test } = require('node:test');
 
-const {
-  cleanEmail,
-  cleanPassword,
-  describeAuthError,
-  publicSession,
-  publicUser,
-} = require('../src/routes/auth');
+const { cleanEmail, cleanPassword } = require('../src/routes/auth');
 const { HttpError } = require('../src/errors');
+const { describeAuthError, publicSession, publicUser } = require('../src/supabase');
 const {
   FAKE_ACCESS_TOKEN,
   FAKE_REFRESH_TOKEN,

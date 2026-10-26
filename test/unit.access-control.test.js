@@ -1,14 +1,17 @@
-// The gate, before it verifies anything.
+// The gate: which header shapes are accepted, and what happens when there is nothing to verify
+// against.
 //
-// Stage 2 is deliberately half-built, and these tests are what keeps that honest rather than
-// dangerous: they pin down every header shape that must be refused, and they assert that the route
-// which a *shaped-but-unverified* token can reach returns nothing about anyone. When Stage 3 adds real
-// verification, the test that says "a made-up token gets through" is the one that has to change.
+// Stage 2 let any well-shaped bearer through and returned a body that named nobody. Stage 3 put
+// `supabase.auth.getUser()` behind it, so the test that used to assert "a made-up token gets through"
+// now asserts the opposite — it is kept here rather than deleted because the shape of the request that
+// changed is the point. What a *verified* token returns lives in test/unit.token-verification.test.js;
+// this file is only about the header and the gate.
 const assert = require('node:assert/strict');
-const { after, before, describe, test } = require('node:test');
+const { after, before, beforeEach, describe, test } = require('node:test');
 
 const { HttpError } = require('../src/errors');
 const { readBearer } = require('../src/http');
+const { createFakeSupabase } = require('./helpers/fake-supabase');
 const { createFakeTasks } = require('./helpers/fake-tasks');
 const { closeAllTestServers, startTestApp } = require('./helpers/server');
 
@@ -90,9 +93,18 @@ describe('GET /public/info needs nothing', () => {
 
 describe('GET /protected/profile', () => {
   let app;
+  let supabase;
 
   before(async () => {
-    app = await startTestApp({ tasks: createFakeTasks() });
+    // The default fake answers `getUser` with no user and no error, which is a shape no successful
+    // verification produces. So every request that gets past the header check in this suite is
+    // refused — which is exactly what these tests are about.
+    supabase = createFakeSupabase();
+    app = await startTestApp({ tasks: createFakeTasks(), supabase });
+  });
+
+  beforeEach(() => {
+    supabase.clear();
   });
 
   after(async () => {
@@ -104,6 +116,7 @@ describe('GET /protected/profile', () => {
 
     assert.equal(response.status, 401);
     assert.deepEqual(response.body, { error: 'Access token required' });
+    assert.deepEqual(supabase.methods(), [], 'a request with no token must not cost a call to the provider');
   });
 
   test('the wrong scheme and the empty token are refused identically', async () => {
@@ -115,22 +128,41 @@ describe('GET /protected/profile', () => {
       assert.equal(response.status, 401);
       assert.deepEqual(response.body, { error: 'Access token required' });
     }
+    assert.deepEqual(supabase.methods(), [], 'and none of them reached Supabase either');
   });
 
-  test('what a merely well-shaped token can reach at Stage 2, and what it cannot', async () => {
+  test('a token that is merely well-shaped is refused, which is what Stage 3 changed', async () => {
     const response = await app.get('/protected/profile', { authorization: 'Bearer made-up-token-12345' });
 
-    assert.equal(response.status, 200, 'this is the gap Stage 3 closes: format is not verification');
-    assert.deepEqual(response.body, { reachable: true, verified: false });
-    assert.doesNotMatch(response.text, /eyJ/, 'no token material echoed back');
-    assert.equal(Object.keys(response.body).length, 2, 'and nothing else in the body');
+    assert.equal(response.status, 401, 'format is not verification');
+    assert.deepEqual(response.body, { error: 'Invalid or expired token' });
+    assert.deepEqual(supabase.methods(), ['getUser'], 'this time the provider was asked');
+    // `getUser(jwt)` takes the token as its one positional argument, so that is what the fake recorded.
+    assert.equal(supabase.inputFor('getUser'), 'made-up-token-12345', 'asked about the token sent');
   });
 
   test('a path under /protected that does not exist is a 404, not an invitation to guess', async () => {
-    const response = await app.get('/protected/admin', { authorization: 'Bearer made-up-token-12345' });
+    const response = await app.get('/protected/nope', { authorization: 'Bearer made-up-token-12345' });
 
     assert.equal(response.status, 404);
-    assert.deepEqual(response.body, { error: 'GET /protected/admin not found' });
+    assert.deepEqual(response.body, { error: 'GET /protected/nope not found' });
+  });
+
+  test('with no client, a caller who sent nothing is still refused for sending nothing', async () => {
+    const unconfigured = await startTestApp({ tasks: createFakeTasks(), supabase: null });
+
+    const noToken = await unconfigured.get('/protected/profile');
+    const shapedToken = await unconfigured.get('/protected/profile', { authorization: 'Bearer made-up-token-12345' });
+
+    assert.deepEqual(noToken.body, { error: 'Access token required' }, 'their problem, whatever ours is');
+    assert.equal(noToken.status, 401);
+    assert.deepEqual(shapedToken.body, { error: 'authentication is not configured' });
+    assert.equal(
+      shapedToken.status,
+      503,
+      'a caller holding a real token is not told it is invalid when we cannot check it',
+    );
+    await unconfigured.close();
   });
 });
 

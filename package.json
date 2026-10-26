@@ -7,7 +7,6 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "migrate": "node src/db/migrate.js",
-    "seed": "node src/db/seed.js",
     "test": "node --test --test-reporter=spec test/*.test.js"
   },
   "keywords": [],

@@ -10,6 +10,7 @@ const express = require('express');
 
 const { DatabaseError, HttpError } = require('./errors');
 const { asyncHandler } = require('./http');
+const { createAuthRouter } = require('./routes/auth');
 const { createTasksRouter } = require('./routes/tasks');
 
 const API_NAME = 'flyrank-w2-a4-supabase-auth';
@@ -50,6 +51,8 @@ function createApp({ tasks, supabase = null, log = console.log }) {
         endpoints: [
           'GET /',
           'GET /health',
+          'POST /auth/signup',
+          'POST /auth/login',
           'GET /tasks',
           'GET /tasks/{id}',
           'POST /tasks',
@@ -75,6 +78,10 @@ function createApp({ tasks, supabase = null, log = console.log }) {
   );
 
   app.use('/tasks', createTasksRouter({ tasks }));
+
+  // Mounted before the catch-all below, so an unmatched path under /auth still reaches it and
+  // answers 404 in this API's own envelope.
+  app.use('/auth', createAuthRouter({ supabase }));
 
   app.get(
     '/stats',

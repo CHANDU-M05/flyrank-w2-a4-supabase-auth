@@ -6,8 +6,16 @@
 // and it costs less to run a real socket here than to add supertest as a dependency.
 const { createApp } = require('../../src/app');
 
-async function startTestApp({ tasks, supabase = null, extra = null }) {
-  const app = createApp({ tasks, supabase, log: () => {} });
+// Every server this file starts, so a test that fails halfway through cannot leave a listening
+// socket behind. Without this one broken assertion turns the run into a hang: node:test waits for the
+// event loop to empty, and a forgotten `app.close()` keeps it full — and a hang reports no failure at
+// all, which is the worst possible diagnostic.
+const openServers = new Set();
+
+async function startTestApp({ tasks, supabase = null, extra = null, log = () => {} }) {
+  // The request-log sink is injectable for one test in particular: proving that nothing sensitive is
+  // written out means reading what the app wrote, and a hardcoded no-op would make that untestable.
+  const app = createApp({ tasks, supabase, log });
   if (extra) extra(app);
 
   const server = await new Promise((resolve, reject) => {
@@ -16,6 +24,7 @@ async function startTestApp({ tasks, supabase = null, extra = null }) {
   });
 
   const base = `http://127.0.0.1:${server.address().port}`;
+  openServers.add(server);
 
   async function call(method, path, options = {}) {
     const headers = { ...options.headers };
@@ -48,6 +57,7 @@ async function startTestApp({ tasks, supabase = null, extra = null }) {
   const del = (path, options) => call('DELETE', path, options);
 
   async function close() {
+    openServers.delete(server);
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
@@ -56,8 +66,22 @@ async function startTestApp({ tasks, supabase = null, extra = null }) {
   return { base, call, get, post, put, del, close, server };
 }
 
+// Use as a file-level `after(closeAllTestServers)` in suites that open a server per test.
+async function closeAllTestServers() {
+  const servers = [...openServers];
+  openServers.clear();
+  await Promise.all(
+    servers.map(
+      (server) =>
+        new Promise((resolve) => {
+          server.close(resolve);
+        }),
+    ),
+  );
+}
+
 // An Authorization header value, spelled once so a test that means to send a bearer token cannot
 // accidentally test something else.
 const bearer = (token) => `Bearer ${token}`;
 
-module.exports = { startTestApp, bearer };
+module.exports = { startTestApp, closeAllTestServers, bearer };

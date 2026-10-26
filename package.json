@@ -1,0 +1,26 @@
+{
+  "name": "flyrank-w2-a4-supabase-auth",
+  "version": "0.1.0",
+  "description": "FlyRank Backend Week 2 · A4 — Supabase Auth + protected Express API",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "migrate": "node src/db/migrate.js",
+    "seed": "node src/db/seed.js",
+    "test": "node --test --test-reporter=spec test/*.test.js"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.3",
+    "pg": "^8.23.1",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "supabase": "^2.122.0"
+  }
+}

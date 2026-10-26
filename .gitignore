@@ -1,0 +1,20 @@
+# Dependencies — installed with `npm install`, never committed.
+node_modules/
+
+# Real configuration. `.env.example` is the committed template; this file holds the live
+# local Supabase keys and must never reach git.
+.env
+.env.local
+
+# Supabase CLI working state. `supabase start` writes the current project ref and a journal here;
+# both belong to this machine, not to the repository.
+supabase/.temp/
+supabase/.branches/
+
+# Verification scratch: commit messages, raw `supabase start` output (contains keys), logs.
+.scratch/
+*.log
+
+# Runtime noise.
+coverage/
+.nyc_output/

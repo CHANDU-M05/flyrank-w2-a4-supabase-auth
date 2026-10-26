@@ -7,8 +7,10 @@
 // either reach the internet or mock `require`, and a test that mocks the framework is not testing
 // much.
 const express = require('express');
+const swaggerUi = require('swagger-ui-express');
 
 const { DatabaseError, HttpError } = require('./errors');
+const { createOpenApiDocument } = require('./docs');
 const { asyncHandler } = require('./http');
 const { createAuthRouter } = require('./routes/auth');
 const { createProtectedRouter } = require('./routes/protected');
@@ -55,6 +57,7 @@ function createApp({ tasks, supabase = null, signOut = null, log = console.log }
         name: API_NAME,
         version: API_VERSION,
         docs: '/docs',
+        openapi: '/openapi.json',
         auth: supabase ? 'supabase' : 'not configured',
         store: 'postgres',
         endpoints: [
@@ -73,6 +76,8 @@ function createApp({ tasks, supabase = null, signOut = null, log = console.log }
           'DELETE /tasks/{id}',
           'GET /stats',
           'POST /reset',
+          'GET /docs',
+          'GET /openapi.json',
         ],
       });
     }),
@@ -98,6 +103,18 @@ function createApp({ tasks, supabase = null, signOut = null, log = console.log }
   // Mounted before the catch-all below, so an unmatched path under /auth still reaches it and
   // answers 404 in this API's own envelope.
   app.use('/auth', createAuthRouter({ supabase, requireAuth, signOut }));
+
+  // §6: Swagger UI at /docs with a bearer scheme. The document comes from src/docs.js rather than a
+  // hand-maintained YAML file precisely so the test suite can compare it against the live routes —
+  // `/openapi.json` exists for the same reason: the assertions are about what the API declares, and
+  // that is only checkable if the declaration is reachable as data.
+  //
+  // The document is built once at wiring time, not per request: it is static, and rebuilding it on
+  // every page load of the UI (which polls its own assets) would be pure waste.
+  const openApiDocument = createOpenApiDocument({ name: API_NAME, version: API_VERSION });
+
+  app.get('/openapi.json', (_request, response) => response.json(openApiDocument));
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openApiDocument));
 
   app.get(
     '/stats',
